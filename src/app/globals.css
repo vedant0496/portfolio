@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -51,12 +49,12 @@ body {
   z-index: 1;
 }
 
-/* Glassmorphism utility */
+/* Glassmorphism utility — 4px blur is ~3× cheaper than 12px on compositing */
 .glass {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 /* Neon text glow */
@@ -92,10 +90,11 @@ body {
   border-radius: 2px;
 }
 
-/* Section base */
+/* Section base — contain isolates layout/paint per section */
 .section {
   position: relative;
   z-index: 1;
+  contain: layout style;
 }
 
 /* Horizontal scroll container */

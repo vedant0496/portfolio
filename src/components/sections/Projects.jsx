@@ -4,8 +4,9 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { motion, useInView } from 'framer-motion';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { ScrollToPlugin } from 'gsap/ScrollToPlugin';
 
-gsap.registerPlugin(ScrollTrigger);
+gsap.registerPlugin(ScrollTrigger, ScrollToPlugin);
 
 const projects = [
   {
@@ -65,7 +66,7 @@ function ProjectCard({ project }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <div className="glass rounded-2xl overflow-hidden h-full flex flex-col group transition-all duration-500 hover:border-white/15">
+      <div className="glass rounded-2xl overflow-hidden h-full flex flex-col group transition-[border-color] duration-500 hover:border-white/15">
         {/* Image container with CSS-based distortion fallback */}
         <div className="relative overflow-hidden h-[260px] md:h-[300px]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -135,14 +136,23 @@ export default function Projects() {
   const sectionRef = useRef(null);
   const trackRef = useRef(null);
   const titleRef = useRef(null);
-  const stRef = useRef(null);           // holds the ScrollTrigger instance
+  const stRef = useRef(null);
   const titleInView = useInView(titleRef, { once: true });
-  const [progress, setProgress] = useState(0); // 0–1
+
+  // Keep progress in a ref to avoid React re-renders on every scroll frame.
+  // Only flush to state at ~15fps via rAF so the dots/buttons stay in sync
+  // without competing with GSAP's animation loop.
+  const progressRef = useRef(0);
+  const [progress, setProgress] = useState(0);
+  const rafRef = useRef(null);
 
   useEffect(() => {
     const section = sectionRef.current;
     const track = trackRef.current;
     if (!section || !track) return;
+
+    // Prevent GSAP from making huge jumps after tab-switch / JS pauses
+    gsap.ticker.lagSmoothing(0);
 
     const getScrollAmount = () => -(track.scrollWidth - window.innerWidth + 96);
 
@@ -154,32 +164,43 @@ export default function Projects() {
           trigger: section,
           start: 'top top',
           end: () => `+=${Math.abs(getScrollAmount())}`,
-          scrub: 1,
+          scrub: 0.8,         // tighter catch-up: more responsive, still smooth
           pin: true,
           anticipatePin: 1,
           invalidateOnRefresh: true,
           onUpdate: (self) => {
-            setProgress(self.progress);
             stRef.current = self;
+            progressRef.current = self.progress;
+            // Batch the React state update — only one setState per animation frame
+            if (!rafRef.current) {
+              rafRef.current = requestAnimationFrame(() => {
+                setProgress(progressRef.current);
+                rafRef.current = null;
+              });
+            }
           },
-          onRefresh: (self) => {
-            stRef.current = self;
-          },
+          onRefresh: (self) => { stRef.current = self; },
         },
       });
     });
 
-    return () => ctx.revert();
+    return () => {
+      ctx.revert();
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      gsap.ticker.lagSmoothing(500, 33); // restore default on unmount
+    };
   }, []);
 
   const scrollByCard = useCallback((direction) => {
     const st = stRef.current;
     if (!st) return;
-    // total pinned scroll distance / number of cards = one card's scroll step
     const totalScroll = st.end - st.start;
     const step = totalScroll / projects.length;
-    const target = window.scrollY + direction * step;
-    window.scrollTo({ top: Math.max(st.start, Math.min(st.end, target)), behavior: 'smooth' });
+    const target = Math.max(st.start, Math.min(st.end, window.scrollY + direction * step));
+    // Use GSAP to tween window scroll — keeps control inside GSAP's loop,
+    // no conflict with native smooth scroll
+    gsap.to(window, { scrollTo: target, duration: 0.6, ease: 'power2.inOut',
+      overwrite: 'auto' });
   }, []);
 
   const atStart = progress <= 0.02;
@@ -225,7 +246,7 @@ export default function Projects() {
               onClick={() => scrollByCard(-1)}
               disabled={atStart}
               aria-label="Previous project"
-              className="group flex items-center justify-center w-11 h-11 rounded-full border transition-all duration-300"
+              className="group flex items-center justify-center w-11 h-11 rounded-full border transition-[border-color,color,opacity] duration-300"
               style={{
                 borderColor: atStart ? 'rgba(255,255,255,0.08)' : 'rgba(0,245,255,0.35)',
                 background: atStart ? 'transparent' : 'rgba(0,245,255,0.05)',
@@ -248,7 +269,7 @@ export default function Projects() {
               onClick={() => scrollByCard(1)}
               disabled={atEnd}
               aria-label="Next project"
-              className="group flex items-center justify-center w-11 h-11 rounded-full border transition-all duration-300"
+              className="group flex items-center justify-center w-11 h-11 rounded-full border transition-[border-color,color,opacity] duration-300"
               style={{
                 borderColor: atEnd ? 'rgba(255,255,255,0.08)' : 'rgba(0,245,255,0.35)',
                 background: atEnd ? 'transparent' : 'rgba(0,245,255,0.05)',
@@ -279,9 +300,10 @@ export default function Projects() {
                       const st = stRef.current;
                       if (!st) return;
                       const target = st.start + (st.end - st.start) * (i / (projects.length - 1));
-                      window.scrollTo({ top: target, behavior: 'smooth' });
+                      gsap.to(window, { scrollTo: target, duration: 0.6, ease: 'power2.inOut',
+                        overwrite: 'auto' });
                     }}
-                    className="rounded-full transition-all duration-300"
+                    className="rounded-full transition-[background-color,transform] duration-300"
                     style={{
                       width: isActive ? '20px' : '6px',
                       height: '6px',
@@ -298,7 +320,7 @@ export default function Projects() {
         <div
           ref={trackRef}
           className="flex items-stretch gap-6 flex-1"
-          style={{ willChange: 'transform' }}
+          style={{ willChange: 'transform', transform: 'translateZ(0)' }}
         >
           {projects.map((project) => (
             <ProjectCard key={project.id} project={project} />

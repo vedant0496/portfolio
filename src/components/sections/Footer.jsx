@@ -87,7 +87,7 @@ export default function Footer() {
             href={link.href}
             target={link.label !== 'Email' ? '_blank' : undefined}
             rel="noopener noreferrer"
-            className="glass flex items-center gap-2.5 px-5 py-3 rounded-full text-sm font-sans text-[#aaa] hover:text-neon-cyan hover:border-neon-cyan/30 transition-all duration-300 group"
+            className="glass flex items-center gap-2.5 px-5 py-3 rounded-full text-sm font-sans text-[#aaa] hover:text-neon-cyan hover:border-neon-cyan/30 transition-colors duration-300 group"
           >
             <span className="group-hover:text-neon-cyan transition-colors duration-300">
               {link.icon}

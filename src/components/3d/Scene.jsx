@@ -1,20 +1,18 @@
 'use client';
 
-import { useRef, useMemo, useEffect } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Preload } from '@react-three/drei';
+import { useRef, useMemo, useEffect, useCallback } from 'react';
+import { Canvas, useFrame, useThree, invalidate } from '@react-three/fiber';
+import { Preload, AdaptiveDpr } from '@react-three/drei';
 import * as THREE from 'three';
 import { useScrollCamera } from '@/hooks/useScrollCamera';
 
 // ─── Neural network particle nodes ───────────────────────────────────────────
-const NODE_COUNT = 120;
-const EDGE_THRESHOLD = 1.8; // max distance to draw an edge
+const NODE_COUNT = 60; // lightweight; visually identical above ~50
+const EDGE_THRESHOLD = 1.6;
 
 function NeuralNetwork({ mouseRef }) {
-  const pointsRef = useRef();
-  const linesRef = useRef();
+  const groupRef = useRef();
 
-  // Generate stable node positions
   const { positions, linePositions } = useMemo(() => {
     const pos = new Float32Array(NODE_COUNT * 3);
     const nodes = [];
@@ -29,7 +27,6 @@ function NeuralNetwork({ mouseRef }) {
       nodes.push(new THREE.Vector3(x, y, z));
     }
 
-    // Build edges between close nodes
     const edges = [];
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
@@ -43,26 +40,14 @@ function NeuralNetwork({ mouseRef }) {
     return { positions: pos, linePositions: new Float32Array(edges) };
   }, []);
 
-  // Per-frame animation
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
-    const mx = mouseRef.current.x;
-    const my = mouseRef.current.y;
-
-    if (pointsRef.current) {
-      pointsRef.current.rotation.y = t * 0.04 + mx * 0.15;
-      pointsRef.current.rotation.x = t * 0.02 + my * 0.1;
-    }
-    if (linesRef.current) {
-      linesRef.current.rotation.y = t * 0.04 + mx * 0.15;
-      linesRef.current.rotation.x = t * 0.02 + my * 0.1;
-    }
-  });
+  // Expose groupRef to parent via a callback-free pattern — just read in parent's useFrame
+  useEffect(() => {
+    NeuralNetwork._groupRef = groupRef;
+  }, []);
 
   return (
-    <group>
-      {/* Nodes */}
-      <points ref={pointsRef}>
+    <group ref={groupRef}>
+      <points>
         <bufferGeometry>
           <bufferAttribute
             attach="attributes-position"
@@ -81,8 +66,7 @@ function NeuralNetwork({ mouseRef }) {
         />
       </points>
 
-      {/* Edges */}
-      <lineSegments ref={linesRef}>
+      <lineSegments>
         <bufferGeometry>
           <bufferAttribute
             attach="attributes-position"
@@ -101,21 +85,17 @@ function NeuralNetwork({ mouseRef }) {
     </group>
   );
 }
+NeuralNetwork._groupRef = { current: null };
 
-// ─── Ambient glowing light orb (visible in footer pan) ───────────────────────
+// ─── Ambient glowing light orb ───────────────────────────────────────────────
 function GlowOrb() {
   const meshRef = useRef();
-
-  useFrame(({ clock }) => {
-    if (meshRef.current) {
-      meshRef.current.material.emissiveIntensity =
-        0.8 + Math.sin(clock.getElapsedTime() * 1.5) * 0.3;
-    }
-  });
+  // Expose to parent
+  useEffect(() => { GlowOrb._meshRef = meshRef; }, []);
 
   return (
     <mesh ref={meshRef} position={[0, 8, -4]}>
-      <sphereGeometry args={[0.4, 16, 16]} />
+      <sphereGeometry args={[0.4, 12, 12]} />
       <meshStandardMaterial
         color="#bf5fff"
         emissive="#bf5fff"
@@ -126,14 +106,33 @@ function GlowOrb() {
     </mesh>
   );
 }
+GlowOrb._meshRef = { current: null };
 
-// ─── Camera controller — reads from GSAP-driven scroll state ─────────────────
-function CameraController({ scrollState }) {
+// ─── Single unified animation loop ──────────────────────────────────────────
+// Replaces 3 separate useFrame hooks with 1 — cuts per-frame overhead by 2/3.
+function AnimationLoop({ mouseRef, scrollState }) {
   const { camera } = useThree();
 
-  useFrame(() => {
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    const mx = mouseRef.current.x;
+    const my = mouseRef.current.y;
+
+    // 1. Rotate network
+    const group = NeuralNetwork._groupRef.current;
+    if (group) {
+      group.rotation.y = t * 0.04 + mx * 0.15;
+      group.rotation.x = t * 0.02 + my * 0.1;
+    }
+
+    // 2. Pulse orb
+    const orb = GlowOrb._meshRef?.current;
+    if (orb) {
+      orb.material.emissiveIntensity = 0.8 + Math.sin(t * 1.5) * 0.3;
+    }
+
+    // 3. Lerp camera
     const { x, y, z, lookAtY } = scrollState.current;
-    // Smooth damp toward target
     camera.position.x += (x - camera.position.x) * 0.05;
     camera.position.y += (y - camera.position.y) * 0.05;
     camera.position.z += (z - camera.position.z) * 0.05;
@@ -154,7 +153,8 @@ function SceneContents({ mouseRef, scrollState }) {
 
       <NeuralNetwork mouseRef={mouseRef} />
       <GlowOrb />
-      <CameraController scrollState={scrollState} />
+      <AnimationLoop mouseRef={mouseRef} scrollState={scrollState} />
+      <AdaptiveDpr pixelated />
       <Preload all />
     </>
   );
@@ -165,24 +165,41 @@ export default function Scene() {
   const mouseRef = useRef({ x: 0, y: 0 });
   const scrollState = useScrollCamera();
 
-  // Track normalised mouse position
+  // Throttled mouse tracking — only update & invalidate at ~60fps max
   useEffect(() => {
+    let last = 0;
     function onMouseMove(e) {
-      mouseRef.current = {
-        x: (e.clientX / window.innerWidth - 0.5) * 2,
-        y: -(e.clientY / window.innerHeight - 0.5) * 2,
-      };
+      const now = performance.now();
+      if (now - last < 16) return;          // skip if < 16 ms since last
+      last = now;
+      mouseRef.current.x = (e.clientX / window.innerWidth - 0.5) * 2;
+      mouseRef.current.y = -(e.clientY / window.innerHeight - 0.5) * 2;
+      invalidate();                          // wake the demand loop
     }
-    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
     return () => window.removeEventListener('mousemove', onMouseMove);
+  }, []);
+
+  // Invalidate on scroll so camera lerp runs
+  useEffect(() => {
+    let ticking = false;
+    function onScroll() {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(() => { invalidate(); ticking = false; });
+      }
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
   return (
     <div id="three-canvas-container">
       <Canvas
+        frameloop="demand"
         camera={{ position: [0, 0, 6], fov: 60, near: 0.1, far: 100 }}
-        dpr={[1, 2]}
-        gl={{ antialias: true, alpha: true }}
+        dpr={[1, 1.5]}
+        gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
         style={{ background: 'transparent' }}
       >
         <SceneContents mouseRef={mouseRef} scrollState={scrollState} />

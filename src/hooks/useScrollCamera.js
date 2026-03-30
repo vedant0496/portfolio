@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { invalidate } from '@react-three/fiber';
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -20,8 +21,18 @@ export function useScrollCamera() {
   });
 
   useEffect(() => {
-    // Proxy object GSAP will tween
+    // Proxy object GSAP will tween — mutate cameraState.current directly
+    // to avoid allocating a new object on every scroll frame.
     const proxy = { x: 0, y: 0, z: 6, lookAtY: 0 };
+
+    function sync() {
+      const s = cameraState.current;
+      s.x = proxy.x;
+      s.y = proxy.y;
+      s.z = proxy.z;
+      s.lookAtY = proxy.lookAtY;
+      invalidate(); // wake the demand frameloop
+    }
 
     const ctx = gsap.context(() => {
       // ── Hero → Experience: camera drifts closer
@@ -35,9 +46,7 @@ export function useScrollCamera() {
           start: 'top bottom',
           end: 'center center',
           scrub: 1.5,
-          onUpdate: () => {
-            cameraState.current = { ...proxy };
-          },
+          onUpdate: sync,
         },
       });
 
@@ -52,9 +61,7 @@ export function useScrollCamera() {
           start: 'top bottom',
           end: 'top center',
           scrub: 1.5,
-          onUpdate: () => {
-            cameraState.current = { ...proxy };
-          },
+          onUpdate: sync,
         },
       });
 
@@ -69,9 +76,7 @@ export function useScrollCamera() {
           start: 'top bottom',
           end: 'center center',
           scrub: 2,
-          onUpdate: () => {
-            cameraState.current = { ...proxy };
-          },
+          onUpdate: sync,
         },
       });
     });
